@@ -66,6 +66,9 @@ void set_stream(rocblas_handle handle,void *stream) {
 }
 
 void check(int status) {if(status != 0) throw std::runtime_error("device BLAS GEMM status="+std::to_string(status));}
+
+constexpr int kRocblasF32 = 151;
+constexpr int kRocblasBF16 = 168;
 }
 
 void RocBlasBackend::gemm_device(Layout layout,Transpose transA,Transpose transB,
@@ -141,8 +144,8 @@ void RocBlasBackend::gemm_bf16_device(Layout layout,Transpose ta,Transpose tb,
   auto fn=vendor_symbol<Fn>("rocblas_gemm_ex");
   const void* a=(layout==Layout::RowMajor ? B:A);
   const void* b=(layout==Layout::RowMajor ? A:B);
-  check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,14,p.lda,b,14,p.ldb,
-    &beta,C,14,p.ldc,C,14,p.ldc,151,0,0,0));
+  check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,kRocblasBF16,p.lda,b,kRocblasBF16,p.ldb,
+    &beta,C,kRocblasBF16,p.ldc,C,kRocblasBF16,p.ldc,kRocblasF32,0,0,0));
 }
 
 void RocBlasBackend::gemm_strided_batched_device(Layout layout,Transpose ta,Transpose tb,
