@@ -17,6 +17,7 @@
 
 #include "clap/blas/rocblas/rocblas_backend.hpp"
 #include "clap/blas/rocblas/rocblas_utils.hpp"
+#include "gemm_select.hpp"
 #include <dlfcn.h>
 #include <stdexcept>
 #include <algorithm>
@@ -80,10 +81,15 @@ void RocBlasBackend::gemm_device(Layout layout,Transpose transA,Transpose transB
   auto p=params(layout,transA,transB,m,n,k,lda,ldb,ldc);
   auto op=clap::dyn::p_rocblas_sgemm;
   if(!op) throw std::runtime_error("rocBLAS sgemm unavailable");
-  check((int)op(handle,p.a,p.b,p.m,p.n,p.k,&alpha,
-      reinterpret_cast<const float*>(layout==Layout::RowMajor ? B:A),p.lda,
-      reinterpret_cast<const float*>(layout==Layout::RowMajor ? A:B),p.ldb,
-      &beta,reinterpret_cast<float*>(C),p.ldc));
+  const float* a=layout==Layout::RowMajor ? B:A;
+  const float* b=layout==Layout::RowMajor ? A:B;
+  auto roc=[&](void* c) {
+    return (int)op(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,p.lda,b,p.ldb,&beta,
+                   static_cast<float*>(c),p.ldc);
+  };
+  if(rocm_gemm::run(rocm_gemm::DType::F32,p.a,p.b,p.m,p.n,p.k,&alpha,a,p.lda,b,p.ldb,
+                    &beta,C,p.ldc,stream,roc)) return;
+  check(roc(C));
 }
 
 void RocBlasBackend::gemm_device(Layout layout,Transpose transA,Transpose transB,
@@ -144,8 +150,13 @@ void RocBlasBackend::gemm_bf16_device(Layout layout,Transpose ta,Transpose tb,
   auto fn=vendor_symbol<Fn>("rocblas_gemm_ex");
   const void* a=(layout==Layout::RowMajor ? B:A);
   const void* b=(layout==Layout::RowMajor ? A:B);
-  check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,kRocblasBF16,p.lda,b,kRocblasBF16,p.ldb,
-    &beta,C,kRocblasBF16,p.ldc,C,kRocblasBF16,p.ldc,kRocblasF32,0,0,0));
+  auto roc=[&](void* c) {
+    return (int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,kRocblasBF16,p.lda,b,kRocblasBF16,p.ldb,
+                   &beta,c,kRocblasBF16,p.ldc,c,kRocblasBF16,p.ldc,kRocblasF32,0,0,0);
+  };
+  if(rocm_gemm::run(rocm_gemm::DType::BF16,p.a,p.b,p.m,p.n,p.k,&alpha,a,p.lda,b,p.ldb,
+                    &beta,C,p.ldc,stream,roc)) return;
+  check(roc(C));
 }
 
 void RocBlasBackend::gemm_strided_batched_device(Layout layout,Transpose ta,Transpose tb,
