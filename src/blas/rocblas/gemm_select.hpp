@@ -39,6 +39,7 @@ enum class DType { F32, BF16 };
 
 bool run(DType type, int op_a, int op_b, int m, int n, int k, const float* alpha,
          const void* A, int lda, const void* B, int ldb, const float* beta, void* C, int ldc,
+         int batch, long long stride_a, long long stride_b, long long stride_c,
          void* stream, const std::function<int(void* c)>& rocblas);
 
 }

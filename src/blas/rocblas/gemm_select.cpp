@@ -52,6 +52,7 @@ constexpr int kCompute32F = 2;
 constexpr int kR32F = 0, kR16BF = 14;
 constexpr int kDescTransA = 0, kDescTransB = 1;
 constexpr int kPrefMaxWorkspace = 1;
+constexpr int kLayoutBatchCount = 0, kLayoutBatchStride = 1;
 constexpr size_t kWorkspace = size_t{32} << 20;
 
 struct Runtime {
@@ -59,6 +60,7 @@ struct Runtime {
   int (*desc_create)(LtDesc*, int, int) = nullptr;
   int (*desc_set)(LtDesc, int, const void*, size_t) = nullptr;
   int (*layout_create)(LtLayout*, int, uint64_t, uint64_t, int64_t) = nullptr;
+  int (*layout_set)(LtLayout, int, const void*, size_t) = nullptr;
   int (*pref_create)(LtPref*) = nullptr;
   int (*pref_set)(LtPref, int, const void*, size_t) = nullptr;
   int (*pref_destroy)(LtPref) = nullptr;
@@ -85,6 +87,7 @@ struct Runtime {
     ok = sym(lt, "hipblasLtCreate", create) && sym(lt, "hipblasLtMatmulDescCreate", desc_create) &&
          sym(lt, "hipblasLtMatmulDescSetAttribute", desc_set) &&
          sym(lt, "hipblasLtMatrixLayoutCreate", layout_create) &&
+         sym(lt, "hipblasLtMatrixLayoutSetAttribute", layout_set) &&
          sym(lt, "hipblasLtMatmulPreferenceCreate", pref_create) &&
          sym(lt, "hipblasLtMatmulPreferenceSetAttribute", pref_set) &&
          sym(lt, "hipblasLtMatmulPreferenceDestroy", pref_destroy) &&
@@ -156,8 +159,9 @@ struct ClassAlgo {
 };
 
 using DescKey = std::tuple<int, int, int>;
-using ShapeKey = std::tuple<int, int, int, int, int, int, int, int, int, int>;
-using ClassKey = std::tuple<int, int, int, int, int, int, int>;
+using ShapeKey = std::tuple<int, int, int, int, int, int, int, int, int, int, int, long long,
+                            long long, long long>;
+using ClassKey = std::tuple<int, int, int, int, int, int, int, int>;
 
 std::mutex mutex;
 std::map<int, Device> devices;
@@ -195,7 +199,7 @@ LtDesc desc(Runtime& rt, int type, int op_a, int op_b) {
 }
 
 Shape* shape(Runtime& rt, const ShapeKey& key, int type, int op_a, int op_b, int m, int n, int k,
-             int lda, int ldb, int ldc) {
+             int lda, int ldb, int ldc, int batch, long long sa, long long sb, long long sc) {
   auto it = shapes.find(key);
   if (it != shapes.end()) return it->second.c ? &it->second : nullptr;
   Shape& s = shapes[key];
@@ -205,6 +209,17 @@ Shape* shape(Runtime& rt, const ShapeKey& key, int type, int op_a, int op_b, int
       rt.layout_create(&s.c, type, m, n, ldc) != 0) {
     s.c = nullptr;
     return nullptr;
+  }
+  if (batch > 1) {
+    const int32_t count = batch;
+    const int64_t strides[3] = {sa, sb, sc};
+    LtLayout layouts[3] = {s.a, s.b, s.c};
+    for (int i = 0; i < 3; ++i)
+      if (rt.layout_set(layouts[i], kLayoutBatchCount, &count, sizeof(count)) != 0 ||
+          rt.layout_set(layouts[i], kLayoutBatchStride, &strides[i], sizeof(strides[i])) != 0) {
+        s.c = nullptr;
+        return nullptr;
+      }
   }
   return &s;
 }
@@ -260,24 +275,27 @@ std::pair<float, float> compare(Runtime& rt, void* stream, const std::function<i
 }
 
 bool run(DType type, int op_a, int op_b, int m, int n, int k, const float* alpha, const void* A,
-         int lda, const void* B, int ldb, const float* beta, void* C, int ldc, void* stream,
+         int lda, const void* B, int ldb, const float* beta, void* C, int ldc, int batch,
+         long long stride_a, long long stride_b, long long stride_c, void* stream,
          const std::function<int(void* c)>& rocblas) {
-  if (mode() == Mode::RocBlas || m <= 0 || n <= 0 || k <= 0) return false;
+  if (mode() == Mode::RocBlas || m <= 0 || n <= 0 || k <= 0 || batch <= 0) return false;
+  if (batch == 1) stride_a = stride_b = stride_c = 0;
   Runtime& rt = runtime();
   if (!rt.ok) return false;
   const int dt = type == DType::F32 ? kR32F : kR16BF;
   std::lock_guard<std::mutex> lock(mutex);
   int dev = 0;
   if (rt.get_device(&dev) != 0) return false;
-  const ClassKey ckey{dev, dt, op_a, op_b, size_class(m), size_class(n), k};
+  const ClassKey ckey{dev, dt, op_a, op_b, size_class(m), size_class(n), k, batch};
   auto choice = choices.find(ckey);
   if (mode() == Mode::Auto && choice != choices.end() && !choice->second) return false;
   Device* d = device(rt, dev);
   if (!d) return false;
   LtDesc dsc = desc(rt, dt, op_a, op_b);
   if (!dsc) return false;
-  Shape* s = shape(rt, ShapeKey{dev, dt, op_a, op_b, m, n, k, lda, ldb, ldc}, dt, op_a, op_b, m,
-                   n, k, lda, ldb, ldc);
+  Shape* s = shape(rt, ShapeKey{dev, dt, op_a, op_b, m, n, k, lda, ldb, ldc, batch, stride_a,
+                                stride_b, stride_c},
+                   dt, op_a, op_b, m, n, k, lda, ldb, ldc, batch, stride_a, stride_b, stride_c);
   if (!s) return false;
   ClassAlgo& ca = algos[ckey];
   if (!ca.ok && !(ca.ok = heuristic(rt, *d, dsc, *s, ca.algo))) {
@@ -300,7 +318,9 @@ bool run(DType type, int op_a, int op_b, int m, int n, int k, const float* alpha
   if (mode() == Mode::Auto && choice == choices.end()) {
     int capturing = 0;
     if (rt.is_capturing(stream, &capturing) != 0 || capturing != 0) return false;
-    const size_t bytes = size_t(ldc) * n * (type == DType::F32 ? 4 : 2);
+    const size_t elems = batch > 1 ? size_t(stride_c) * (batch - 1) + size_t(ldc) * n
+                                   : size_t(ldc) * n;
+    const size_t bytes = elems * (type == DType::F32 ? 4 : 2);
     if (d->scratch_bytes < bytes) {
       if (d->scratch) rt.free_fn(d->scratch);
       d->scratch = nullptr;
@@ -312,9 +332,9 @@ bool run(DType type, int op_a, int op_b, int m, int n, int k, const float* alpha
                                    [&] { return rocblas(d->scratch); });
     choice = choices.emplace(ckey, lt > 0 && (roc < 0 || lt < 0.97f * roc)).first;
     if (debug())
-      std::fprintf(stderr, "[clap rocm gemm] choice type=%d op=%d,%d m=%d (class %d) n=%d (class %d) k=%d: "
+      std::fprintf(stderr, "[clap rocm gemm] choice type=%d op=%d,%d m=%d (class %d) n=%d (class %d) k=%d batch=%d: "
                    "hipBLASLt %.1f us, rocBLAS %.1f us -> %s\n", dt, op_a, op_b, m, size_class(m), n,
-                   size_class(n), k, lt, roc, choice->second ? "hipBLASLt" : "rocBLAS");
+                   size_class(n), k, batch, lt, roc, choice->second ? "hipBLASLt" : "rocBLAS");
     if (!choice->second) return false;
   }
   return gemm(C) == 0;

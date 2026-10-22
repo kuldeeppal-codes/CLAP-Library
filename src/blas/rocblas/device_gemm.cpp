@@ -88,7 +88,7 @@ void RocBlasBackend::gemm_device(Layout layout,Transpose transA,Transpose transB
                    static_cast<float*>(c),p.ldc);
   };
   if(rocm_gemm::run(rocm_gemm::DType::F32,p.a,p.b,p.m,p.n,p.k,&alpha,a,p.lda,b,p.ldb,
-                    &beta,C,p.ldc,stream,roc)) return;
+                    &beta,C,p.ldc,1,0,0,0,stream,roc)) return;
   check(roc(C));
 }
 
@@ -155,7 +155,7 @@ void RocBlasBackend::gemm_bf16_device(Layout layout,Transpose ta,Transpose tb,
                    &beta,c,kRocblasBF16,p.ldc,c,kRocblasBF16,p.ldc,kRocblasF32,0,0,0);
   };
   if(rocm_gemm::run(rocm_gemm::DType::BF16,p.a,p.b,p.m,p.n,p.k,&alpha,a,p.lda,b,p.ldb,
-                    &beta,C,p.ldc,stream,roc)) return;
+                    &beta,C,p.ldc,1,0,0,0,stream,roc)) return;
   check(roc(C));
 }
 
@@ -177,8 +177,13 @@ void RocBlasBackend::gemm_strided_batched_device(Layout layout,Transpose ta,Tran
   const float* b=static_cast<const float*>(layout==Layout::RowMajor ? A:B);
   auto sa=layout==Layout::RowMajor ? strideB:strideA;
   auto sb=layout==Layout::RowMajor ? strideA:strideB;
-  check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,p.lda,sa,
-                b,p.ldb,sb,&beta,static_cast<float*>(C),p.ldc,strideC,batches));
+  auto roc=[&](void* c) {
+    return (int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,p.lda,sa,
+                   b,p.ldb,sb,&beta,static_cast<float*>(c),p.ldc,strideC,batches);
+  };
+  if(rocm_gemm::run(rocm_gemm::DType::F32,p.a,p.b,p.m,p.n,p.k,&alpha,a,p.lda,b,p.ldb,
+                    &beta,C,p.ldc,batches,sa,sb,strideC,stream,roc)) return;
+  check(roc(C));
 }
 
 void RocBlasBackend::gemm_strided_batched_bf16_device(Layout layout,Transpose ta,Transpose tb,
@@ -200,8 +205,13 @@ void RocBlasBackend::gemm_strided_batched_bf16_device(Layout layout,Transpose ta
   const void* b=(layout==Layout::RowMajor ? A:B);
   auto sa=layout==Layout::RowMajor ? strideB:strideA;
   auto sb=layout==Layout::RowMajor ? strideA:strideB;
-  check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,kRocblasBF16,p.lda,sa,
-    b,kRocblasBF16,p.ldb,sb,&beta,C,kRocblasBF16,p.ldc,strideC,
-    C,kRocblasBF16,p.ldc,strideC,batches,kRocblasF32,0,0,0));
+  auto roc=[&](void* c) {
+    return (int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,kRocblasBF16,p.lda,sa,
+                   b,kRocblasBF16,p.ldb,sb,&beta,c,kRocblasBF16,p.ldc,strideC,
+                   c,kRocblasBF16,p.ldc,strideC,batches,kRocblasF32,0,0,0);
+  };
+  if(rocm_gemm::run(rocm_gemm::DType::BF16,p.a,p.b,p.m,p.n,p.k,&alpha,a,p.lda,b,p.ldb,
+                    &beta,C,p.ldc,batches,sa,sb,strideC,stream,roc)) return;
+  check(roc(C));
 }
 }
