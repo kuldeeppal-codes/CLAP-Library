@@ -58,7 +58,6 @@ Params params(Layout layout, Transpose transA, Transpose transB,
 }
 
 void set_stream(cublasHandle_t handle,void *stream) {
-  if(!stream) return;
   using Fn = cublasStatus_t (*)(cublasHandle_t,void*);
   auto fn = vendor_symbol<Fn>("cublasSetStream_v2");
   if(fn(handle,stream) != CUBLAS_STATUS_SUCCESS)

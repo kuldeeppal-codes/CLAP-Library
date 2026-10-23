@@ -59,7 +59,6 @@ Params params(Layout layout, Transpose transA, Transpose transB,
 }
 
 void set_stream(rocblas_handle handle,void *stream) {
-  if(!stream) return;
   using Fn = rocblas_status (*)(rocblas_handle,void*);
   auto fn = vendor_symbol<Fn>("rocblas_set_stream");
   if(fn(handle,stream) != rocblas_status_success)

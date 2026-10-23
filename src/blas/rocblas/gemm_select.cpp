@@ -203,7 +203,7 @@ Shape* shape(Runtime& rt, const ShapeKey& key, int type, int op_a, int op_b, int
   auto it = shapes.find(key);
   if (it != shapes.end()) return it->second.c ? &it->second : nullptr;
   Shape& s = shapes[key];
-  const bool ta = op_a == kOpT, tb = op_b == kOpT;
+  const bool ta = op_a != kOpN, tb = op_b != kOpN;
   if (rt.layout_create(&s.a, type, ta ? k : m, ta ? m : k, lda) != 0 ||
       rt.layout_create(&s.b, type, tb ? n : k, tb ? k : n, ldb) != 0 ||
       rt.layout_create(&s.c, type, m, n, ldc) != 0) {
