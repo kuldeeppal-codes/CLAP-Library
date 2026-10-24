@@ -197,4 +197,29 @@ void CuBlasBackend::gemm_strided_batched_bf16_device(Layout layout,Transpose ta,
   check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,14,p.lda,sa,b,14,p.ldb,sb,
     &beta,C,14,p.ldc,strideC,batches,68,-1));
 }
+
+void CuBlasBackend::gemm_ex_strided_batched_device(Layout layout,Transpose ta,Transpose tb,
+  int m,int n,int k,float alpha,const void* A,int lda,long long strideA,
+  const void* B,int ldb,long long strideB,float beta,void* C,int ldc,
+  long long strideC,int batches,GemmElem ab,GemmElem c_type,void* stream) {
+  if (!(c_type == ab || (c_type == GemmElem::F32 && ab != GemmElem::F32)))
+    throw std::invalid_argument("gemm_ex: C must have A/B's type or be F32");
+  if(batches<0 || strideA<0 || strideB<0 || strideC<0)
+    throw std::invalid_argument("Invalid batched GEMM count/stride");
+  validate(layout,ta,tb,m,n,k,lda,ldb,ldc,A,B,C);
+  if (batches==0 || m==0 || n==0) return;
+  set_stream(handle,stream);
+  auto p=params(layout,ta,tb,m,n,k,lda,ldb,ldc);
+  using Fn=cublasStatus_t (*)(cublasHandle_t,cublasOperation_t,cublasOperation_t,
+    int,int,int,const void*,const void*,int,int,long long,const void*,int,int,long long,
+    const void*,void*,int,int,long long,int,int,int);
+  auto fn=vendor_symbol<Fn>("cublasGemmStridedBatchedEx");
+  const void* a=(layout==Layout::RowMajor ? B:A);
+  const void* b=(layout==Layout::RowMajor ? A:B);
+  auto sa=layout==Layout::RowMajor ? strideB:strideA;
+  auto sb=layout==Layout::RowMajor ? strideA:strideB;
+  auto ty=[](GemmElem e) { return e == GemmElem::F16 ? 2 : e == GemmElem::BF16 ? 14 : 0; };
+  check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,ty(ab),p.lda,sa,b,ty(ab),p.ldb,sb,
+    &beta,C,ty(c_type),p.ldc,strideC,batches,68,-1));
+}
 }

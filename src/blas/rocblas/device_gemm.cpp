@@ -71,6 +71,16 @@ void check(int status) {if(status != 0) throw std::runtime_error("device BLAS GE
 
 constexpr int kRocblasF32 = 151;
 constexpr int kRocblasBF16 = 168;
+constexpr int kRocblasF16 = 150;
+
+int rocblas_type(GemmElem e) {
+  return e == GemmElem::F16 ? kRocblasF16 : e == GemmElem::BF16 ? kRocblasBF16 : kRocblasF32;
+}
+
+void check_ex_types(GemmElem ab, GemmElem c) {
+  if (!(c == ab || (c == GemmElem::F32 && ab != GemmElem::F32)))
+    throw std::invalid_argument("gemm_ex: C must have A/B's type or be F32");
+}
 }
 
 void RocBlasBackend::gemm_device(Layout layout,Transpose transA,Transpose transB,
@@ -214,5 +224,30 @@ void RocBlasBackend::gemm_strided_batched_bf16_device(Layout layout,Transpose ta
   if(rocm_gemm::run(rocm_gemm::DType::BF16,p.a,p.b,p.m,p.n,p.k,&alpha,a,p.lda,b,p.ldb,
                     &beta,C,p.ldc,batches,sa,sb,strideC,stream,roc)) return;
   check(roc(C));
+}
+
+void RocBlasBackend::gemm_ex_strided_batched_device(Layout layout,Transpose ta,Transpose tb,
+  int m,int n,int k,float alpha,const void* A,int lda,long long strideA,
+  const void* B,int ldb,long long strideB,float beta,void* C,int ldc,
+  long long strideC,int batches,GemmElem ab,GemmElem c_type,void* stream) {
+  check_ex_types(ab,c_type);
+  if(batches<0 || strideA<0 || strideB<0 || strideC<0)
+    throw std::invalid_argument("Invalid batched GEMM count/stride");
+  validate(layout,ta,tb,m,n,k,lda,ldb,ldc,A,B,C);
+  if (batches==0 || m==0 || n==0) return;
+  set_stream(handle,stream);
+  auto p=params(layout,ta,tb,m,n,k,lda,ldb,ldc);
+  using Fn=rocblas_status (*)(rocblas_handle,rocblas_operation,rocblas_operation,
+    int,int,int,const void*,const void*,int,int,long long,const void*,int,int,long long,
+    const void*,const void*,int,int,long long,void*,int,int,long long,
+    int,int,int,int,unsigned);
+  auto fn=vendor_symbol<Fn>("rocblas_gemm_strided_batched_ex");
+  const void* a=(layout==Layout::RowMajor ? B:A);
+  const void* b=(layout==Layout::RowMajor ? A:B);
+  auto sa=layout==Layout::RowMajor ? strideB:strideA;
+  auto sb=layout==Layout::RowMajor ? strideA:strideB;
+  const int t=rocblas_type(ab), tc=rocblas_type(c_type);
+  check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,t,p.lda,sa,b,t,p.ldb,sb,
+                &beta,C,tc,p.ldc,strideC,C,tc,p.ldc,strideC,batches,kRocblasF32,0,0,0));
 }
 }

@@ -26,6 +26,7 @@ enum class BackendType { CPU, CUDA, AMD };
 
 enum class Layout { RowMajor, ColMajor };
 enum class Transpose { NoTrans, Trans, ConjTrans };
+enum class GemmElem { F32, F16, BF16 };
 enum class Uplo { Upper, Lower };
 
 enum class Diag { NonUnit, Unit };
@@ -530,6 +531,16 @@ public:
                                                 float beta, void *dC, int ldc, long long strideC,
                                                 int batch_count, void *stream = nullptr) {
     throw std::runtime_error("BF16 strided-batched device GEMM unsupported by this backend");
+  }
+
+  virtual void gemm_ex_strided_batched_device(Layout layout, Transpose transA, Transpose transB,
+                                              int m, int n, int k, float alpha,
+                                              const void *dA, int lda, long long strideA,
+                                              const void *dB, int ldb, long long strideB,
+                                              float beta, void *dC, int ldc, long long strideC,
+                                              int batch_count, GemmElem ab, GemmElem c,
+                                              void *stream = nullptr) {
+    throw std::runtime_error("mixed-precision device GEMM unsupported by this backend");
   }
 };
 
