@@ -299,7 +299,7 @@ int main(int argc, char** argv) {
       for (int batch : {1, 3})
         for (float beta : {0.0f, 1.0f}) {
           ++run;
-          if (!check_int8(*be, rt, ta, tb, 33, 20, 64, batch, beta)) ++failed;
+          if (!check_int8(*be, rt, ta, tb, 32, 20, 64, batch, beta)) ++failed;
         }
   int fp8_run = 0, fp8_skipped = 0;
   for (Transpose ta : ops)
