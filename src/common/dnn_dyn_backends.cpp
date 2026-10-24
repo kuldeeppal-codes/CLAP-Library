@@ -183,7 +183,7 @@ static bool loadCudaAndCudnnImpl() {
     S0(cudaGetDevice); S0(cudaStreamCreate); S0(cudaStreamDestroy); S0(cudaStreamSynchronize); S0(cudaMemcpyAsync); S0(cudaMemsetAsync); S0(cudaMallocAsync); S0(cudaFreeAsync);
 #undef S0
     int count=0; if(p_cudaGetDeviceCount(&count)!=0 || count<=0) { error_text="CUDA runtime loaded but no NVIDIA GPU is available"; return false; }
-    cudnn_lib=open_any({"libcudnn.so", "libcudnn.so.9"});
+    cudnn_lib=open_any({"libcudnn.so", "libcudnn.so.9", "libcudnn.so.8"});
     if (!cudnn_lib) { error_text="cannot dlopen libcudnn.so; set LD_LIBRARY_PATH to cuDNN lib directory"; return false; }
 #define S(x) if(!sym(cudnn_lib,#x,p_##x)) return false
     S(cudnnCreate); S(cudnnDestroy); S(cudnnCreateTensorDescriptor); S(cudnnSetTensor4dDescriptor); S(cudnnDestroyTensorDescriptor);
@@ -257,7 +257,7 @@ bool loadHipAndMiopen() {
 }
 
 static bool loadHipAndMiopenImpl() {
-    hip_lib=open_any({"libamdhip64.so", "libamdhip64.so.6"});
+    hip_lib=open_any({"libamdhip64.so", "libamdhip64.so.7", "libamdhip64.so.6"});
     if (!hip_lib) { error_text="cannot dlopen libamdhip64.so"; return false; }
 #define S0(x) if(!sym(hip_lib,#x,p_##x)) return false
     S0(hipGetDeviceCount); S0(hipMalloc); S0(hipFree); S0(hipMemcpy); S0(hipDeviceSynchronize);
