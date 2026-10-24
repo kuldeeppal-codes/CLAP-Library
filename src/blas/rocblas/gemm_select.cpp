@@ -51,6 +51,7 @@ constexpr int kOpN = 111, kOpT = 112;
 constexpr int kCompute32F = 2;
 constexpr int kR32F = 0, kR16BF = 14;
 constexpr int kDescTransA = 0, kDescTransB = 1;
+constexpr int kDescScaleA = 5, kDescScaleB = 6;
 constexpr int kPrefMaxWorkspace = 1;
 constexpr int kLayoutBatchCount = 0, kLayoutBatchStride = 1;
 constexpr size_t kWorkspace = size_t{32} << 20;
@@ -272,6 +273,60 @@ std::pair<float, float> compare(Runtime& rt, void* stream, const std::function<i
   return {best_lt, best_roc};
 }
 
+using ScaledKey = std::tuple<int, int, int, int, int, int, int, int, int, int, int, int>;
+struct Scaled {
+  LtDesc desc = nullptr;
+  LtLayout a = nullptr, b = nullptr, c = nullptr;
+  LtAlgo algo{};
+  bool ok = false;
+};
+std::map<ScaledKey, Scaled> scaled;
+
+}
+
+bool run_scaled(int a_type, int b_type, int c_type, int op_a, int op_b, int m, int n, int k,
+                const void* A, int lda, const void* B, int ldb, void* C, int ldc,
+                const void* scale_a, const void* scale_b, void* stream) {
+  if (a_type < 0 || b_type < 0 || c_type < 0 || m <= 0 || n <= 0 || k <= 0) return false;
+  Runtime& rt = runtime();
+  if (!rt.ok) return false;
+  std::lock_guard<std::mutex> lock(mutex);
+  int dev = 0;
+  if (rt.get_device(&dev) != 0) return false;
+  Device* d = device(rt, dev);
+  if (!d) return false;
+  const ScaledKey key{dev, a_type, b_type, c_type, op_a, op_b, m, n, k, lda, ldb, ldc};
+  auto it = scaled.find(key);
+  if (it == scaled.end()) {
+    Scaled s;
+    const bool ta = op_a != kOpN, tb = op_b != kOpN;
+    s.ok = rt.desc_create(&s.desc, kCompute32F, kR32F) == 0 &&
+           rt.desc_set(s.desc, kDescTransA, &op_a, sizeof(op_a)) == 0 &&
+           rt.desc_set(s.desc, kDescTransB, &op_b, sizeof(op_b)) == 0 &&
+           rt.desc_set(s.desc, kDescScaleA, &scale_a, sizeof(scale_a)) == 0 &&
+           rt.desc_set(s.desc, kDescScaleB, &scale_b, sizeof(scale_b)) == 0 &&
+           rt.layout_create(&s.a, a_type, ta ? k : m, ta ? m : k, lda) == 0 &&
+           rt.layout_create(&s.b, b_type, tb ? n : k, tb ? k : n, ldb) == 0 &&
+           rt.layout_create(&s.c, c_type, m, n, ldc) == 0;
+    if (s.ok) {
+      Shape sh;
+      sh.a = s.a;
+      sh.b = s.b;
+      sh.c = s.c;
+      s.ok = heuristic(rt, *d, s.desc, sh, s.algo);
+    }
+    if (debug())
+      std::fprintf(stderr, "[clap rocm gemm] fp8 types=%d,%d->%d op=%d,%d m=%d n=%d k=%d: %s\n", a_type, b_type,
+                   c_type, op_a, op_b, m, n, k, s.ok ? "hipBLASLt algorithm" : "none");
+    it = scaled.emplace(key, s).first;
+  }
+  Scaled& s = it->second;
+  if (!s.ok) return false;
+  rt.desc_set(s.desc, kDescScaleA, &scale_a, sizeof(scale_a));
+  rt.desc_set(s.desc, kDescScaleB, &scale_b, sizeof(scale_b));
+  const float one = 1.f, zero = 0.f;
+  return rt.matmul(d->handle, s.desc, &one, A, s.a, B, s.b, &zero, C, s.c, C, s.c, &s.algo,
+                   d->workspace, kWorkspace, stream) == 0;
 }
 
 bool run(DType type, int op_a, int op_b, int m, int n, int k, const float* alpha, const void* A,

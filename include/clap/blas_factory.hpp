@@ -26,7 +26,7 @@ enum class BackendType { CPU, CUDA, AMD };
 
 enum class Layout { RowMajor, ColMajor };
 enum class Transpose { NoTrans, Trans, ConjTrans };
-enum class GemmElem { F32, F16, BF16 };
+enum class GemmElem { F32, F16, BF16, I8, I32, F8E4M3, F8E5M2, F8E4M3FNUZ, F8E5M2FNUZ };
 enum class Uplo { Upper, Lower };
 
 enum class Diag { NonUnit, Unit };
@@ -541,6 +541,13 @@ public:
                                               int batch_count, GemmElem ab, GemmElem c,
                                               void *stream = nullptr) {
     throw std::runtime_error("mixed-precision device GEMM unsupported by this backend");
+  }
+
+  virtual bool gemm_scaled_device(Layout layout, Transpose transA, Transpose transB, int m, int n,
+                                  int k, const void *dA, int lda, const void *dB, int ldb, void *dC,
+                                  int ldc, GemmElem a_type, GemmElem b_type, GemmElem c_type,
+                                  const void *scale_a, const void *scale_b, void *stream = nullptr) {
+    return false;
   }
 };
 

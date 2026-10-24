@@ -42,5 +42,9 @@ bool run(DType type, int op_a, int op_b, int m, int n, int k, const float* alpha
          int batch, long long stride_a, long long stride_b, long long stride_c,
          void* stream, const std::function<int(void* c)>& rocblas);
 
+bool run_scaled(int a_type, int b_type, int c_type, int op_a, int op_b, int m, int n, int k,
+                const void* A, int lda, const void* B, int ldb, void* C, int ldc,
+                const void* scale_a, const void* scale_b, void* stream);
+
 }
 }

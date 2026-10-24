@@ -202,8 +202,11 @@ void CuBlasBackend::gemm_ex_strided_batched_device(Layout layout,Transpose ta,Tr
   int m,int n,int k,float alpha,const void* A,int lda,long long strideA,
   const void* B,int ldb,long long strideB,float beta,void* C,int ldc,
   long long strideC,int batches,GemmElem ab,GemmElem c_type,void* stream) {
-  if (!(c_type == ab || (c_type == GemmElem::F32 && ab != GemmElem::F32)))
-    throw std::invalid_argument("gemm_ex: C must have A/B's type or be F32");
+  const bool fp = (ab == GemmElem::F32 || ab == GemmElem::F16 || ab == GemmElem::BF16) &&
+                  (c_type == ab || (c_type == GemmElem::F32 && ab != GemmElem::F32));
+  const bool i8 = ab == GemmElem::I8 && c_type == GemmElem::I32;
+  if (!fp && !i8)
+    throw std::invalid_argument("gemm_ex: C must have A/B's type or be F32 (I8 inputs: I32)");
   if(batches<0 || strideA<0 || strideB<0 || strideC<0)
     throw std::invalid_argument("Invalid batched GEMM count/stride");
   validate(layout,ta,tb,m,n,k,lda,ldb,ldc,A,B,C);
@@ -218,7 +221,15 @@ void CuBlasBackend::gemm_ex_strided_batched_device(Layout layout,Transpose ta,Tr
   const void* b=(layout==Layout::RowMajor ? A:B);
   auto sa=layout==Layout::RowMajor ? strideB:strideA;
   auto sb=layout==Layout::RowMajor ? strideA:strideB;
-  auto ty=[](GemmElem e) { return e == GemmElem::F16 ? 2 : e == GemmElem::BF16 ? 14 : 0; };
+  auto ty=[](GemmElem e) {
+    return e == GemmElem::F16 ? 2 : e == GemmElem::BF16 ? 14 : e == GemmElem::I8 ? 3 : e == GemmElem::I32 ? 10 : 0;
+  };
+  if (ab == GemmElem::I8) {
+    const int32_t ia = static_cast<int32_t>(alpha), ib = static_cast<int32_t>(beta);
+    check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&ia,a,3,p.lda,sa,b,3,p.ldb,sb,
+      &ib,C,10,p.ldc,strideC,batches,72,-1));
+    return;
+  }
   check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,ty(ab),p.lda,sa,b,ty(ab),p.ldb,sb,
     &beta,C,ty(c_type),p.ldc,strideC,batches,68,-1));
 }

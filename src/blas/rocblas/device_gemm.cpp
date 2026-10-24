@@ -72,14 +72,25 @@ void check(int status) {if(status != 0) throw std::runtime_error("device BLAS GE
 constexpr int kRocblasF32 = 151;
 constexpr int kRocblasBF16 = 168;
 constexpr int kRocblasF16 = 150;
+constexpr int kRocblasI8 = 160;
+constexpr int kRocblasI32 = 162;
 
 int rocblas_type(GemmElem e) {
-  return e == GemmElem::F16 ? kRocblasF16 : e == GemmElem::BF16 ? kRocblasBF16 : kRocblasF32;
+  switch (e) {
+    case GemmElem::F16: return kRocblasF16;
+    case GemmElem::BF16: return kRocblasBF16;
+    case GemmElem::I8: return kRocblasI8;
+    case GemmElem::I32: return kRocblasI32;
+    default: return kRocblasF32;
+  }
 }
 
 void check_ex_types(GemmElem ab, GemmElem c) {
-  if (!(c == ab || (c == GemmElem::F32 && ab != GemmElem::F32)))
-    throw std::invalid_argument("gemm_ex: C must have A/B's type or be F32");
+  const bool fp = (ab == GemmElem::F32 || ab == GemmElem::F16 || ab == GemmElem::BF16) &&
+                  (c == ab || (c == GemmElem::F32 && ab != GemmElem::F32));
+  const bool i8 = ab == GemmElem::I8 && c == GemmElem::I32;
+  if (!fp && !i8)
+    throw std::invalid_argument("gemm_ex: C must have A/B's type or be F32 (I8 inputs: I32)");
 }
 }
 
@@ -247,7 +258,41 @@ void RocBlasBackend::gemm_ex_strided_batched_device(Layout layout,Transpose ta,T
   auto sa=layout==Layout::RowMajor ? strideB:strideA;
   auto sb=layout==Layout::RowMajor ? strideA:strideB;
   const int t=rocblas_type(ab), tc=rocblas_type(c_type);
+  if (ab == GemmElem::I8) {
+    const int32_t ia = static_cast<int32_t>(alpha), ib = static_cast<int32_t>(beta);
+    check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&ia,a,t,p.lda,sa,b,t,p.ldb,sb,
+                  &ib,C,tc,p.ldc,strideC,C,tc,p.ldc,strideC,batches,kRocblasI32,0,0,0));
+    return;
+  }
   check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,t,p.lda,sa,b,t,p.ldb,sb,
                 &beta,C,tc,p.ldc,strideC,C,tc,p.ldc,strideC,batches,kRocblasF32,0,0,0));
+}
+
+bool RocBlasBackend::gemm_scaled_device(Layout layout,Transpose ta,Transpose tb,int m,int n,int k,
+  const void* A,int lda,const void* B,int ldb,void* C,int ldc,GemmElem a_type,GemmElem b_type,
+  GemmElem c_type,const void* scale_a,const void* scale_b,void* stream) {
+  auto lt_type=[](GemmElem e) {
+    switch (e) {
+      case GemmElem::F32: return 0;
+      case GemmElem::F16: return 2;
+      case GemmElem::BF16: return 14;
+      case GemmElem::F8E4M3: return 28;
+      case GemmElem::F8E5M2: return 29;
+      case GemmElem::F8E4M3FNUZ: return 1000;
+      case GemmElem::F8E5M2FNUZ: return 1001;
+      default: return -1;
+    }
+  };
+  const bool f8a=a_type>=GemmElem::F8E4M3, f8b=b_type>=GemmElem::F8E4M3;
+  const bool out_ok=c_type==GemmElem::F32 || c_type==GemmElem::F16 || c_type==GemmElem::BF16;
+  if (!f8a || !f8b || !out_ok) return false;
+  validate(layout,ta,tb,m,n,k,lda,ldb,ldc,A,B,C);
+  if (m==0 || n==0) return true;
+  auto p=params(layout,ta,tb,m,n,k,lda,ldb,ldc);
+  const bool rm=layout==Layout::RowMajor;
+  return rocm_gemm::run_scaled(rm ? lt_type(b_type) : lt_type(a_type), rm ? lt_type(a_type) : lt_type(b_type),
+                               lt_type(c_type), (int)p.a, (int)p.b, p.m, p.n, p.k, rm ? B : A, p.lda,
+                               rm ? A : B, p.ldb, C, p.ldc, rm ? scale_b : scale_a, rm ? scale_a : scale_b,
+                               stream);
 }
 }
