@@ -25,6 +25,13 @@
 
 namespace clap {
 namespace {
+constexpr int kCudaR16F = 2;
+constexpr int kCudaR8I = 3;
+constexpr int kCudaR32I = 10;
+constexpr int kCudaR16BF = 14;
+constexpr int kCublasCompute32F = 68;
+constexpr int kCublasCompute32I = 72;
+constexpr int kCublasGemmDefault = -1;
 template <typename T> T vendor_symbol(const char* symbol) {
   static void* library = [] {
     void* h = nullptr;
@@ -150,8 +157,8 @@ void CuBlasBackend::gemm_bf16_device(Layout layout,Transpose ta,Transpose tb,
   auto fn=vendor_symbol<Fn>("cublasGemmEx");
   const void* a=(layout==Layout::RowMajor ? B:A);
   const void* b=(layout==Layout::RowMajor ? A:B);
-  check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,14,p.lda,b,14,p.ldb,
-    &beta,C,14,p.ldc,68,-1));
+  check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,kCudaR16BF,p.lda,b,kCudaR16BF,p.ldb,
+    &beta,C,kCudaR16BF,p.ldc,kCublasCompute32F,kCublasGemmDefault));
 }
 
 void CuBlasBackend::gemm_strided_batched_device(Layout layout,Transpose ta,Transpose tb,
@@ -194,8 +201,8 @@ void CuBlasBackend::gemm_strided_batched_bf16_device(Layout layout,Transpose ta,
   const void* b=(layout==Layout::RowMajor ? A:B);
   auto sa=layout==Layout::RowMajor ? strideB:strideA;
   auto sb=layout==Layout::RowMajor ? strideA:strideB;
-  check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,14,p.lda,sa,b,14,p.ldb,sb,
-    &beta,C,14,p.ldc,strideC,batches,68,-1));
+  check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,kCudaR16BF,p.lda,sa,b,kCudaR16BF,p.ldb,sb,
+    &beta,C,kCudaR16BF,p.ldc,strideC,batches,kCublasCompute32F,kCublasGemmDefault));
 }
 
 void CuBlasBackend::gemm_ex_strided_batched_device(Layout layout,Transpose ta,Transpose tb,
@@ -222,15 +229,16 @@ void CuBlasBackend::gemm_ex_strided_batched_device(Layout layout,Transpose ta,Tr
   auto sa=layout==Layout::RowMajor ? strideB:strideA;
   auto sb=layout==Layout::RowMajor ? strideA:strideB;
   auto ty=[](GemmElem e) {
-    return e == GemmElem::F16 ? 2 : e == GemmElem::BF16 ? 14 : e == GemmElem::I8 ? 3 : e == GemmElem::I32 ? 10 : 0;
+    return e == GemmElem::F16 ? kCudaR16F : e == GemmElem::BF16 ? kCudaR16BF : e == GemmElem::I8 ? kCudaR8I
+         : e == GemmElem::I32 ? kCudaR32I : 0;
   };
   if (ab == GemmElem::I8) {
     const int32_t ia = static_cast<int32_t>(alpha), ib = static_cast<int32_t>(beta);
-    check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&ia,a,3,p.lda,sa,b,3,p.ldb,sb,
-      &ib,C,10,p.ldc,strideC,batches,72,-1));
+    check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&ia,a,kCudaR8I,p.lda,sa,b,kCudaR8I,p.ldb,sb,
+      &ib,C,kCudaR32I,p.ldc,strideC,batches,kCublasCompute32I,kCublasGemmDefault));
     return;
   }
   check((int)fn(handle,p.a,p.b,p.m,p.n,p.k,&alpha,a,ty(ab),p.lda,sa,b,ty(ab),p.ldb,sb,
-    &beta,C,ty(c_type),p.ldc,strideC,batches,68,-1));
+    &beta,C,ty(c_type),p.ldc,strideC,batches,kCublasCompute32F,kCublasGemmDefault));
 }
 }

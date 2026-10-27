@@ -73,6 +73,7 @@ struct Runtime {
   int (*get_device)(int*) = nullptr;
   int (*malloc_fn)(void**, size_t) = nullptr;
   int (*free_fn)(void*) = nullptr;
+  int (*memset_async)(void*, int, size_t, void*) = nullptr;
   int (*event_create)(void**) = nullptr;
   int (*event_destroy)(void*) = nullptr;
   int (*event_record)(void*, void*) = nullptr;
@@ -95,6 +96,7 @@ struct Runtime {
          sym(lt, "hipblasLtMatmulAlgoGetHeuristic", heuristic) &&
          sym(lt, "hipblasLtMatmul", matmul) && sym(hip, "hipGetDevice", get_device) &&
          sym(hip, "hipMalloc", malloc_fn) && sym(hip, "hipFree", free_fn) &&
+         sym(hip, "hipMemsetAsync", memset_async) &&
          sym(hip, "hipEventCreate", event_create) && sym(hip, "hipEventDestroy", event_destroy) &&
          sym(hip, "hipEventRecord", event_record) && sym(hip, "hipEventSynchronize", event_sync) &&
          sym(hip, "hipEventElapsedTime", event_elapsed) &&
@@ -381,6 +383,11 @@ bool run(DType type, int op_a, int op_b, int m, int n, int k, const float* alpha
       d->scratch = nullptr;
       d->scratch_bytes = 0;
       if (rt.malloc_fn(&d->scratch, bytes) != 0) return false;
+      if (rt.memset_async(d->scratch, 0, bytes, stream) != 0) {
+        rt.free_fn(d->scratch);
+        d->scratch = nullptr;
+        return false;
+      }
       d->scratch_bytes = bytes;
     }
     const auto [lt, roc] = compare(rt, stream, [&] { return gemm(d->scratch); },
